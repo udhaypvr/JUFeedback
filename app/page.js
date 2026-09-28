@@ -11,7 +11,7 @@ import {
   LogOut, 
   X, 
   Send,
-  ChalkboardUser
+  User // Changed from ChalkboardUser
 } from 'lucide-react';
 
 export default function StudentPortal() {
