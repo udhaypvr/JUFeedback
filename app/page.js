@@ -284,7 +284,7 @@ export default function StudentPortal() {
                       <div>
                         <h4 className="font-bold text-slate-900 text-base leading-snug">{courseName}</h4>
                         <p className="text-xs text-slate-500 mt-1 flex items-center space-x-1.5">
-                          <ChalkboardUser className="w-3.5 h-3.5 text-indigo-500" />
+                          <User className="w-3.5 h-3.5 text-indigo-500" />
                           <span>Faculty: <strong className="text-slate-700">{facultyName}</strong> ({department})</span>
                         </p>
                       </div>
