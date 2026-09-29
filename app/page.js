@@ -14,70 +14,29 @@ import {
   User,
   Search,
   Check,
-  Plus
+  Plus,
+  BookOpen
 } from 'lucide-react';
 
-// University Evaluation Criteria
 const EVALUATION_CRITERIA = [
-  {
-    id: 1,
-    title: "Clarity of Instruction",
-    question: "How clearly does the faculty explain concepts, instructions, and expectations?"
-  },
-  {
-    id: 2,
-    title: "Subject Knowledge & Preparedness",
-    question: "Is the faculty well-prepared, knowledgeable, and able to answer questions confidently?"
-  },
-  {
-    id: 3,
-    title: "Communication & Availability",
-    question: "How responsive and accessible is the faculty outside class (office hours, email, LMS)?"
-  },
-  {
-    id: 4,
-    title: "Fairness in Assessment",
-    question: "Are grading, exams, and assignments fair, transparent, and aligned with what was taught?"
-  },
-  {
-    id: 5,
-    title: "Teaching Style & Engagement (Interactive Panel & ICT)",
-    question: "Does the faculty make classes interesting, interactive, and easy to follow using ICT tools and interactive panels?"
-  },
-  {
-    id: 6,
-    title: "Respect & Inclusivity",
-    question: "Does the faculty treat all students with respect, regardless of background, gender, or ability?"
-  },
-  {
-    id: 7,
-    title: "Punctuality & Professionalism",
-    question: "Does the faculty attend classes on time, follow the schedule, and conduct themselves professionally?"
-  },
-  {
-    id: 8,
-    title: "Feedback Quality",
-    question: "Is the feedback on assignments/tests timely, specific, and helpful for improvement?"
-  },
-  {
-    id: 9,
-    title: "Support for Student Success",
-    question: "Does the faculty encourage participation, mentor students, and support learning beyond the syllabus?"
-  },
-  {
-    id: 10,
-    title: "Overall Satisfaction",
-    question: "Overall, how satisfied are you with the faculty’s teaching and conduct in this course?"
-  }
+  { id: 1, title: "Clarity of Instruction", question: "How clearly does the faculty explain concepts, instructions, and expectations?" },
+  { id: 2, title: "Subject Knowledge & Preparedness", question: "Is the faculty well-prepared, knowledgeable, and able to answer questions confidently?" },
+  { id: 3, title: "Communication & Availability", question: "How responsive and accessible is the faculty outside class (office hours, email, LMS)?" },
+  { id: 4, title: "Fairness in Assessment", question: "Are grading, exams, and assignments fair, transparent, and aligned with what was taught?" },
+  { id: 5, title: "Teaching Style & Engagement (Interactive Panel & ICT)", question: "Does the faculty make classes interesting, interactive, and easy to follow using ICT tools and interactive panels?" },
+  { id: 6, title: "Respect & Inclusivity", question: "Does the faculty treat all students with respect, regardless of background, gender, or ability?" },
+  { id: 7, title: "Punctuality & Professionalism", question: "Does the faculty attend classes on time, follow the schedule, and conduct themselves professionally?" },
+  { id: 8, title: "Feedback Quality", question: "Is the feedback on assignments/tests timely, specific, and helpful for improvement?" },
+  { id: 9, title: "Support for Student Success", question: "Does the faculty encourage participation, mentor students, and support learning beyond the syllabus?" },
+  { id: 10, title: "Overall Satisfaction", question: "Overall, how satisfied are you with the faculty’s teaching and conduct in this course?" }
 ];
 
 export default function StudentPortal() {
-  // Navigation & Form States
   const [prnInput, setPrnInput] = useState('');
   const [activePRN, setActivePRN] = useState(null);
+  const [studentSemester, setStudentSemester] = useState(null);
   const [step, setStep] = useState('login'); // 'login' | 'select_instructors' | 'dashboard'
 
-  // Supabase Data States
   const [allOfferings, setAllOfferings] = useState([]);
   const [selectedOfferingIds, setSelectedOfferingIds] = useState(new Set());
   const [submittedOfferingIds, setSubmittedOfferingIds] = useState(new Set());
@@ -85,13 +44,26 @@ export default function StudentPortal() {
   const [savingSelections, setSavingSelections] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Modal State
   const [modalOffering, setModalOffering] = useState(null);
   const [ratings, setRatings] = useState({});
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Step 1: Login & Verify Existing Selections in Supabase
+  // Helper: Extract Semester from PRN
+  const calculateSemesterFromPRN = (prn) => {
+    const yearMatch = prn.match(/^\d{4}/);
+    if (!yearMatch) return 5; // Default fallback to Semester 5
+
+    const joinYear = parseInt(yearMatch[0], 10);
+    const currentYear = new Date().getFullYear(); // e.g., 2026
+    
+    // Formula: (CurrentYear - JoinYear) * 2 + 1 (for odd term e.g. 5th sem)
+    let sem = (currentYear - joinYear) * 2 + 1;
+    if (sem < 1) sem = 1;
+    if (sem > 8) sem = 8;
+    return sem;
+  };
+
   const handlePRNSubmit = async (e) => {
     e.preventDefault();
     const cleanPRN = prnInput.trim().toUpperCase();
@@ -99,22 +71,29 @@ export default function StudentPortal() {
 
     setLoading(true);
 
-    // 1. Fetch master list of faculty and course offerings
+    const calculatedSem = calculateSemesterFromPRN(cleanPRN);
+    setStudentSemester(calculatedSem);
+
+    // Fetch offerings filtered by student's semester
     const { data: offeringsData, error: offError } = await supabase
       .from('course_offerings')
       .select(`
         id,
-        courses (id, code, name),
-        faculty (id, name, department)
-      `);
+        batch,
+        section,
+        semester,
+        courses:course_code (code, name, school, programme),
+        faculty:employee_id (employee_id, name, school)
+      `)
+      .eq('semester', calculatedSem);
 
-    if (offError || !offeringsData || offeringsData.length === 0) {
+    if (offError) {
       setLoading(false);
-      alert('Error fetching course offerings from database: ' + (offError?.message || 'No courses found.'));
+      alert('Error fetching course offerings: ' + offError.message);
       return;
     }
 
-    // 2. Fetch existing submissions from feedback_submissions
+    // Fetch existing submissions
     const { data: submissions } = await supabase
       .from('feedback_submissions')
       .select('course_offering_id')
@@ -123,24 +102,22 @@ export default function StudentPortal() {
     const lockedSet = new Set((submissions || []).map((s) => s.course_offering_id));
     setSubmittedOfferingIds(lockedSet);
 
-    // 3. Fetch previously saved instructor selections from Supabase
+    // Fetch saved selections
     const { data: existingSelections } = await supabase
       .from('student_course_selections')
       .select('course_offering_id')
       .eq('student_prn', cleanPRN);
 
-    // Combine previous saved selections and any existing submissions
     const mergedSelectedIds = new Set([
       ...(existingSelections || []).map((s) => s.course_offering_id),
       ...Array.from(lockedSet)
     ]);
 
     setActivePRN(cleanPRN);
-    setAllOfferings(offeringsData);
+    setAllOfferings(offeringsData || []);
     setSelectedOfferingIds(mergedSelectedIds);
     setLoading(false);
 
-    // ROUTING LOGIC: If student has already selected instructors, jump straight to dashboard
     if (mergedSelectedIds.size > 0) {
       setStep('dashboard');
     } else {
@@ -148,7 +125,6 @@ export default function StudentPortal() {
     }
   };
 
-  // Toggle Selection of Instructor/Course
   const toggleOfferingSelection = (id) => {
     const nextSet = new Set(selectedOfferingIds);
     if (nextSet.has(id)) {
@@ -159,7 +135,6 @@ export default function StudentPortal() {
     setSelectedOfferingIds(nextSet);
   };
 
-  // Confirm Instructor Selection & Save directly to Supabase
   const handleConfirmInstructors = async () => {
     if (selectedOfferingIds.size === 0) {
       alert('Please select at least one instructor/course to continue.');
@@ -168,27 +143,19 @@ export default function StudentPortal() {
 
     setSavingSelections(true);
 
-    // Prepare payload to sync with student_course_selections table
     const payload = Array.from(selectedOfferingIds).map((offeringId) => ({
       student_prn: activePRN,
       course_offering_id: offeringId
     }));
 
-    // Upsert into Supabase so subsequent logins skip selection screen
-    const { error } = await supabase
+    await supabase
       .from('student_course_selections')
       .upsert(payload, { onConflict: 'student_prn,course_offering_id' });
 
     setSavingSelections(false);
-
-    if (error) {
-      console.warn('Could not sync selections to database:', error.message);
-    }
-
     setStep('dashboard');
   };
 
-  // Open Evaluation Modal
   const openFeedbackModal = async (offering) => {
     const { data: existing } = await supabase
       .from('feedback_submissions')
@@ -207,7 +174,6 @@ export default function StudentPortal() {
     setComment('');
   };
 
-  // Submit Feedback to Supabase
   const handleSubmitFeedback = async (e) => {
     e.preventDefault();
 
@@ -218,7 +184,6 @@ export default function StudentPortal() {
 
     setSubmitting(true);
 
-    // 1. Insert Feedback Header
     const { data: sub, error } = await supabase
       .from('feedback_submissions')
       .insert([{ student_prn: activePRN, course_offering_id: modalOffering.id, comment }])
@@ -227,16 +192,11 @@ export default function StudentPortal() {
 
     if (error) {
       setSubmitting(false);
-      if (error.code === '23505') {
-        alert('Feedback has already been submitted and locked for this instructor!');
-      } else {
-        alert('Submission failed: ' + error.message);
-      }
+      alert(error.code === '23505' ? 'Feedback already locked!' : 'Submission failed: ' + error.message);
       setModalOffering(null);
       return;
     }
 
-    // 2. Insert Ratings
     const ratingsPayload = Object.entries(ratings).map(([critId, rating]) => ({
       submission_id: sub.id,
       criteria_id: parseInt(critId),
@@ -245,9 +205,7 @@ export default function StudentPortal() {
 
     await supabase.from('feedback_ratings').insert(ratingsPayload);
 
-    // Update local state to reflect lock
     setSubmittedOfferingIds((prev) => new Set([...prev, modalOffering.id]));
-
     setSubmitting(false);
     setModalOffering(null);
     alert('Feedback submitted and locked successfully!');
@@ -263,19 +221,17 @@ export default function StudentPortal() {
     setStep('login');
   };
 
-  // Search Filter
   const filteredOfferings = allOfferings.filter((off) => {
     const q = searchQuery.toLowerCase();
     const courseCode = off.courses?.code?.toLowerCase() || '';
     const courseName = off.courses?.name?.toLowerCase() || '';
     const facultyName = off.faculty?.name?.toLowerCase() || '';
-    const dept = off.faculty?.department?.toLowerCase() || '';
-    return courseCode.includes(q) || courseName.includes(q) || facultyName.includes(q) || dept.includes(q);
+    const school = off.faculty?.school?.toLowerCase() || '';
+    return courseCode.includes(q) || courseName.includes(q) || facultyName.includes(q) || school.includes(q);
   });
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
-      {/* Header */}
       <header className="bg-indigo-900 text-white shadow-md sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -291,8 +247,8 @@ export default function StudentPortal() {
           {activePRN && (
             <div className="flex items-center space-x-4 border-l border-indigo-700 pl-4">
               <div className="text-right">
-                <p className="text-[10px] text-indigo-300 uppercase tracking-wider font-semibold">Active PRN</p>
-                <p className="text-xs font-bold text-white font-mono">{activePRN}</p>
+                <p className="text-[10px] text-indigo-300 uppercase tracking-wider font-semibold">PRN: {activePRN}</p>
+                <p className="text-xs font-bold text-emerald-300 font-mono">Semester {studentSemester}</p>
               </div>
               <button onClick={logout} className="bg-indigo-800 hover:bg-indigo-700 px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center space-x-1.5">
                 <LogOut className="w-3.5 h-3.5" />
@@ -303,10 +259,7 @@ export default function StudentPortal() {
         </div>
       </header>
 
-      {/* Main Container */}
       <main className="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
-        {/* STEP 1: PRN LOGIN */}
         {step === 'login' && (
           <div className="max-w-md mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-200 mt-12">
             <div className="flex items-center space-x-3 mb-6">
@@ -315,7 +268,7 @@ export default function StudentPortal() {
               </div>
               <div>
                 <h2 className="text-xl font-bold text-indigo-900">Student Portal Access</h2>
-                <p className="text-xs text-slate-500">Enter your PRN to sign in</p>
+                <p className="text-xs text-slate-500">Enter your PRN to fetch semester instructors</p>
               </div>
             </div>
 
@@ -327,7 +280,7 @@ export default function StudentPortal() {
                   value={prnInput}
                   onChange={(e) => setPrnInput(e.target.value)}
                   required
-                  placeholder="Enter your PRN"
+                  placeholder="Enter PRN (e.g., 2024BTAM001)"
                   className="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none transition uppercase"
                 />
               </div>
@@ -336,44 +289,44 @@ export default function StudentPortal() {
                 disabled={loading}
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl text-sm shadow-md transition-all flex items-center justify-center space-x-2"
               >
-                <span>{loading ? 'Verifying & Syncing...' : 'Log In'}</span>
+                <span>{loading ? 'Determining Semester & Syncing...' : 'Log In'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
           </div>
         )}
 
-        {/* STEP 2: SELECT INSTRUCTORS & COURSES */}
         {step === 'select_instructors' && (
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
-                <h2 className="text-xl font-bold text-slate-900">Select Your Instructors</h2>
-                <p className="text-xs text-slate-500 mt-1">Select the courses and instructors you are attending this semester. Your choices will be synced.</p>
+                <div className="inline-flex items-center space-x-2 bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full text-xs font-bold mb-2">
+                  <span>Showing Faculty for Semester {studentSemester}</span>
+                </div>
+                <h2 className="text-xl font-bold text-slate-900">Select Your Semester Instructors</h2>
+                <p className="text-xs text-slate-500 mt-1">Select instructors for courses you are attending in Semester {studentSemester}.</p>
               </div>
               <button
                 onClick={handleConfirmInstructors}
                 disabled={savingSelections}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl text-xs font-semibold shadow-md transition flex items-center space-x-2"
               >
-                <span>{savingSelections ? 'Syncing...' : `Confirm (${selectedOfferingIds.size}) Selected`}</span>
+                <span>{savingSelections ? 'Saving...' : `Confirm (${selectedOfferingIds.size}) Selected`}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Search Filter */}
             <div className="relative max-w-md">
               <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search by faculty name, course, or department..."
+                placeholder="Search by faculty, course code, or school..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
 
-            {/* Instructor Selection Grid */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {filteredOfferings.map((off) => {
                 const isSelected = selectedOfferingIds.has(off.id);
@@ -390,13 +343,16 @@ export default function StudentPortal() {
                     }`}
                   >
                     <div className="space-y-2">
-                      <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-slate-100 text-slate-700">
-                        {off.courses?.code || 'COURSE'}
-                      </span>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xs font-bold px-2 py-0.5 rounded bg-indigo-100 text-indigo-800">
+                          {off.courses?.code}
+                        </span>
+                        <span className="text-[10px] font-semibold text-slate-500">Sec {off.section}</span>
+                      </div>
                       <h4 className="font-bold text-slate-900 text-sm">{off.courses?.name}</h4>
                       <p className="text-xs text-slate-600 flex items-center space-x-1">
                         <User className="w-3.5 h-3.5 text-indigo-500" />
-                        <span><strong>{off.faculty?.name}</strong> ({off.faculty?.department})</span>
+                        <span><strong>{off.faculty?.name}</strong> ({off.faculty?.school})</span>
                       </p>
                       {isAlreadySubmitted && (
                         <span className="inline-block text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-semibold mt-1">
@@ -417,37 +373,31 @@ export default function StudentPortal() {
           </div>
         )}
 
-        {/* STEP 3: DASHBOARD */}
         {step === 'dashboard' && (
           <div className="space-y-6">
             <div className="bg-gradient-to-r from-indigo-800 to-indigo-900 text-white rounded-2xl p-6 shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div className="space-y-1">
                 <div className="inline-flex items-center space-x-2 bg-indigo-700/60 px-3 py-1 rounded-full text-xs font-medium text-indigo-100 mb-1">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  <span>Active Term: Faculty Feedback Session</span>
+                  <span>Semester {studentSemester} Feedback Session</span>
                 </div>
                 <h2 className="text-2xl font-bold">Your Selected Instructors</h2>
-                <p className="text-indigo-200 text-xs">Evaluate your instructors below. Once submitted, feedback is locked.</p>
+                <p className="text-indigo-200 text-xs">Evaluate your instructors. Ratings lock immediately upon submission.</p>
               </div>
               <button
                 onClick={() => setStep('select_instructors')}
                 className="bg-indigo-700 hover:bg-indigo-600 text-white text-xs px-4 py-2 rounded-xl border border-indigo-500 flex items-center space-x-1.5 transition"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Add / Edit Instructors</span>
+                <span>Add / Edit Selected Faculty</span>
               </button>
             </div>
 
-            {/* Display Selected Instructors */}
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
               {allOfferings
                 .filter((off) => selectedOfferingIds.has(off.id))
                 .map((off) => {
                   const isLocked = submittedOfferingIds.has(off.id);
-                  const courseCode = off.courses?.code || 'COURSE';
-                  const courseName = off.courses?.name || 'Course Subject';
-                  const facultyName = off.faculty?.name || 'Faculty Member';
-                  const department = off.faculty?.department || 'General';
 
                   return (
                     <div
@@ -459,12 +409,12 @@ export default function StudentPortal() {
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <span className={`text-xs font-bold px-2.5 py-1 rounded-lg ${isLocked ? 'bg-emerald-100 text-emerald-800' : 'bg-indigo-50 text-indigo-700'}`}>
-                            {courseCode}
+                            {off.courses?.code}
                           </span>
                           {isLocked ? (
                             <span className="inline-flex items-center space-x-1 text-xs font-semibold text-emerald-700 bg-emerald-100/80 px-2.5 py-1 rounded-full">
                               <Lock className="w-3 h-3 text-emerald-600" />
-                              <span>Locked & Completed</span>
+                              <span>Locked</span>
                             </span>
                           ) : (
                             <span className="inline-flex items-center space-x-1 text-xs font-medium text-amber-600 bg-amber-50 px-2.5 py-1 rounded-full">
@@ -475,10 +425,10 @@ export default function StudentPortal() {
                         </div>
 
                         <div>
-                          <h4 className="font-bold text-slate-900 text-base leading-snug">{courseName}</h4>
+                          <h4 className="font-bold text-slate-900 text-base leading-snug">{off.courses?.name}</h4>
                           <p className="text-xs text-slate-500 mt-1 flex items-center space-x-1.5">
                             <User className="w-3.5 h-3.5 text-indigo-500" />
-                            <span>Faculty: <strong className="text-slate-700">{facultyName}</strong> ({department})</span>
+                            <span>Faculty: <strong className="text-slate-700">{off.faculty?.name}</strong> ({off.faculty?.school})</span>
                           </p>
                         </div>
                       </div>
@@ -487,7 +437,7 @@ export default function StudentPortal() {
                         {isLocked ? (
                           <button disabled className="w-full bg-slate-100 text-slate-400 font-semibold px-4 py-2.5 rounded-xl text-xs cursor-not-allowed flex items-center justify-center space-x-2 border border-slate-200">
                             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                            <span>Feedback Submitted & Locked</span>
+                            <span>Submitted & Locked</span>
                           </button>
                         ) : (
                           <button
@@ -507,7 +457,7 @@ export default function StudentPortal() {
         )}
       </main>
 
-      {/* EVALUATION MODAL */}
+      {/* Evaluation Modal */}
       {modalOffering && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-100 flex flex-col">
@@ -526,10 +476,9 @@ export default function StudentPortal() {
                 <p className="font-bold mb-1 flex items-center space-x-1">
                   <Lock className="w-3.5 h-3.5 mr-1" /> Single Submission Notice
                 </p>
-                Once submitted, your feedback for this instructor is locked and cannot be edited or resubmitted.
+                Once submitted, your feedback for this instructor is locked and cannot be edited.
               </div>
 
-              {/* 10 Evaluation Criteria List */}
               <div className="space-y-5">
                 {EVALUATION_CRITERIA.map((crit) => (
                   <div key={crit.id} className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
@@ -556,23 +505,18 @@ export default function StudentPortal() {
                         </label>
                       ))}
                     </div>
-                    <div className="flex justify-between text-[10px] text-slate-400 px-1 pt-0.5">
-                      <span>Poor (1)</span>
-                      <span>Average (3)</span>
-                      <span>Outstanding (5)</span>
-                    </div>
                   </div>
                 ))}
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-2">Optional Qualitative Feedback / Comments</label>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-2">Optional Comments</label>
                 <textarea
                   rows={3}
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
                   className="w-full border border-slate-300 rounded-xl p-3 text-xs outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="Constructive suggestions or feedback regarding teaching methods..."
+                  placeholder="Constructive feedback..."
                 />
               </div>
 
