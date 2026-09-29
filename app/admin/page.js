@@ -13,7 +13,10 @@ import {
   BarChart3, 
   School,
   Filter,
-  CheckCircle2
+  CheckCircle2,
+  Lock,
+  LogOut,
+  KeyRound
 } from 'lucide-react';
 
 const CRITERIA_NAMES = {
@@ -30,17 +33,47 @@ const CRITERIA_NAMES = {
 };
 
 export default function AdminDashboard() {
+  // Authentication state
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  // Dashboard state
   const [analytics, setAnalytics] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSchool, setSelectedSchool] = useState('ALL');
   const [expandedFacultyId, setExpandedFacultyId] = useState(null);
   const [facultyDetails, setFacultyDetails] = useState({});
-  const [selectedComments, setSelectedComments] = useState(null);
 
+  // Check existing session on load
   useEffect(() => {
-    fetchAnalytics();
+    const sessionAuth = sessionStorage.getItem('ju_admin_auth');
+    if (sessionAuth === 'true') {
+      setIsAuthenticated(true);
+      fetchAnalytics();
+    }
   }, []);
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    const correctPassword = process.env.NEXT_PUBLIC_ADMIN_PASSWORD || 'admin123';
+
+    if (passwordInput === correctPassword) {
+      sessionStorage.setItem('ju_admin_auth', 'true');
+      setIsAuthenticated(true);
+      setAuthError('');
+      fetchAnalytics();
+    } else {
+      setAuthError('Incorrect password. Please try again.');
+    }
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem('ju_admin_auth');
+    setIsAuthenticated(false);
+    setPasswordInput('');
+  };
 
   const fetchAnalytics = async () => {
     setLoading(true);
@@ -57,14 +90,12 @@ export default function AdminDashboard() {
     setLoading(false);
   };
 
-  // Fetch criteria breakdown and comments for an expanded faculty member
   const loadFacultyDetails = async (employeeId) => {
     if (facultyDetails[employeeId]) {
       setExpandedFacultyId(expandedFacultyId === employeeId ? null : employeeId);
       return;
     }
 
-    // Fetch offering IDs for this faculty
     const { data: offerings } = await supabase
       .from('course_offerings')
       .select('id, course_code, courses(name)')
@@ -81,7 +112,6 @@ export default function AdminDashboard() {
       return;
     }
 
-    // Fetch submissions & comments
     const { data: submissions } = await supabase
       .from('feedback_submissions')
       .select('id, comment, created_at, course_offering_id')
@@ -90,7 +120,6 @@ export default function AdminDashboard() {
     const submissionIds = (submissions || []).map((s) => s.id);
     const commentsList = (submissions || []).filter((s) => s.comment && s.comment.trim() !== '');
 
-    // Fetch criteria ratings
     let criteriaAvg = {};
     if (submissionIds.length > 0) {
       const { data: ratings } = await supabase
@@ -98,7 +127,6 @@ export default function AdminDashboard() {
         .select('criteria_id, rating')
         .in('submission_id', submissionIds);
 
-      // Aggregate criteria averages
       const sums = {};
       const counts = {};
       (ratings || []).forEach((r) => {
@@ -118,7 +146,6 @@ export default function AdminDashboard() {
     setExpandedFacultyId(employeeId);
   };
 
-  // Filter options
   const schools = ['ALL', ...Array.from(new Set(analytics.map((a) => a.school).filter(Boolean)))];
 
   const filteredAnalytics = analytics.filter((item) => {
@@ -129,14 +156,12 @@ export default function AdminDashboard() {
     return matchesSearch && matchesSchool;
   });
 
-  // Calculate platform summary numbers
   const totalSubmissions = analytics.reduce((acc, cur) => acc + (cur.total_submissions || 0), 0);
   const avgPlatformRating = (
     analytics.reduce((acc, cur) => acc + (parseFloat(cur.overall_avg_rating) || 0), 0) /
     (analytics.filter((a) => a.total_submissions > 0).length || 1)
   ).toFixed(2);
 
-  // Export CSV Functionality
   const exportToCSV = () => {
     const headers = ['Employee ID,Faculty Name,School,Total Submissions,Average Rating\n'];
     const rows = filteredAnalytics.map(
@@ -150,9 +175,55 @@ export default function AdminDashboard() {
     a.click();
   };
 
+  // --- PASSWORD LOCK SCREEN ---
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 font-sans">
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-xl max-w-md w-full p-8 text-center space-y-6">
+          <div className="w-16 h-16 bg-indigo-50 text-indigo-900 rounded-2xl flex items-center justify-center mx-auto shadow-inner">
+            <Lock className="w-8 h-8" />
+          </div>
+
+          <div>
+            <h2 className="text-2xl font-black text-slate-900">Admin Portal</h2>
+            <p className="text-xs text-slate-500 mt-1">Enter password to access feedback analytics</p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div className="relative">
+              <KeyRound className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
+              <input
+                type="password"
+                placeholder="Enter password..."
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                className="w-full pl-10 pr-4 py-3 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-600 transition"
+                autoFocus
+              />
+            </div>
+
+            {authError && (
+              <p className="text-xs font-semibold text-rose-600 text-left pl-1">{authError}</p>
+            )}
+
+            <button
+              type="submit"
+              className="w-full bg-indigo-900 hover:bg-indigo-950 text-white font-bold py-3 text-xs rounded-xl shadow-md transition"
+            >
+              Unlock Dashboard
+            </button>
+          </form>
+
+          <p className="text-[11px] text-slate-400">Joy University Student Feedback Portal</p>
+        </div>
+      </div>
+    );
+  }
+
+  // --- MAIN ADMIN DASHBOARD ---
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
-      {/* Top Bar */}
+      {/* Header */}
       <header className="bg-indigo-900 text-white shadow-md sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -165,18 +236,28 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          <button
-            onClick={exportToCSV}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-semibold shadow-md transition flex items-center space-x-2"
-          >
-            <Download className="w-4 h-4" />
-            <span>Export Report (CSV)</span>
-          </button>
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={exportToCSV}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold shadow-md transition flex items-center space-x-1.5"
+            >
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">Export CSV</span>
+            </button>
+
+            <button
+              onClick={handleLogout}
+              className="bg-indigo-800 hover:bg-indigo-700 text-indigo-100 px-3 py-2 rounded-xl text-xs font-semibold border border-indigo-700 transition flex items-center space-x-1.5"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Lock</span>
+            </button>
+          </div>
         </div>
       </header>
 
       <main className="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        {/* Key Metrics Overview */}
+        {/* Metric Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs flex items-center space-x-4">
             <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl">
@@ -193,7 +274,7 @@ export default function AdminDashboard() {
               <CheckCircle2 className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Evaluated Courses</p>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Evaluated Courses</p>
               <h3 className="text-2xl font-black text-slate-900 mt-0.5">{totalSubmissions}</h3>
             </div>
           </div>
@@ -209,13 +290,13 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Filters and Search */}
+        {/* Filters */}
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row gap-4 items-center justify-between">
           <div className="relative w-full md:w-80">
             <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
             <input
               type="text"
-              placeholder="Search by instructor name or ID..."
+              placeholder="Search instructor or ID..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
@@ -237,17 +318,17 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Main Analytics Table */}
+        {/* Instructor Table */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="p-5 border-b border-slate-100 flex items-center justify-between">
             <h2 className="font-bold text-slate-900 text-base">Instructor Average Rating Report</h2>
-            <span className="text-xs text-slate-500 font-semibold">{filteredAnalytics.length} Instructors Listed</span>
+            <span className="text-xs text-slate-500 font-semibold">{filteredAnalytics.length} Listed</span>
           </div>
 
           {loading ? (
-            <div className="p-12 text-center text-xs text-slate-500">Loading evaluation reports...</div>
+            <div className="p-12 text-center text-xs text-slate-500">Loading reports...</div>
           ) : filteredAnalytics.length === 0 ? (
-            <div className="p-12 text-center text-xs text-slate-500">No instructor data matches the selected filters.</div>
+            <div className="p-12 text-center text-xs text-slate-500">No instructors matched.</div>
           ) : (
             <div className="divide-y divide-slate-100">
               {filteredAnalytics.map((faculty) => {
@@ -257,7 +338,6 @@ export default function AdminDashboard() {
                 return (
                   <div key={faculty.employee_id} className="transition-colors hover:bg-slate-50/50">
                     <div className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                      {/* Instructor Info */}
                       <div className="flex items-start space-x-3">
                         <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-bold text-sm">
                           {faculty.faculty_name.charAt(0)}
@@ -275,7 +355,6 @@ export default function AdminDashboard() {
                         </div>
                       </div>
 
-                      {/* Statistics */}
                       <div className="flex items-center space-x-6">
                         <div className="text-center">
                           <p className="text-[10px] uppercase tracking-wider font-bold text-slate-400">Submissions</p>
@@ -296,17 +375,16 @@ export default function AdminDashboard() {
                           className="px-3 py-1.5 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 hover:bg-white hover:border-indigo-300 transition flex items-center space-x-1"
                         >
                           <BarChart3 className="w-3.5 h-3.5 text-indigo-600" />
-                          <span>{isExpanded ? 'Hide Details' : 'Breakdown'}</span>
+                          <span>{isExpanded ? 'Hide' : 'Breakdown'}</span>
                           {isExpanded ? <ChevronUp className="w-3.5 h-3.5 ml-1" /> : <ChevronDown className="w-3.5 h-3.5 ml-1" />}
                         </button>
                       </div>
                     </div>
 
-                    {/* Detailed Criteria Breakdown */}
                     {isExpanded && (
                       <div className="bg-slate-50/80 p-6 border-t border-slate-200 space-y-6">
                         <div>
-                          <h5 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3">Performance Across 10 Evaluation Criteria</h5>
+                          <h5 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3">10 Criteria Breakdown</h5>
                           {details && details.criteriaAvg && Object.keys(details.criteriaAvg).length > 0 ? (
                             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                               {Object.entries(CRITERIA_NAMES).map(([id, title]) => {
@@ -332,15 +410,12 @@ export default function AdminDashboard() {
                           )}
                         </div>
 
-                        {/* Comments Section */}
                         {details && details.comments && details.comments.length > 0 && (
                           <div>
-                            <div className="flex items-center justify-between mb-3">
-                              <h5 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center space-x-1.5">
-                                <MessageSquare className="w-3.5 h-3.5 text-indigo-600" />
-                                <span>Anonymous Student Comments ({details.comments.length})</span>
-                              </h5>
-                            </div>
+                            <h5 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center space-x-1.5">
+                              <MessageSquare className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>Anonymous Student Comments ({details.comments.length})</span>
+                            </h5>
                             <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
                               {details.comments.map((c, i) => (
                                 <div key={i} className="bg-white p-3 rounded-xl border border-slate-200 text-xs text-slate-700 italic">
