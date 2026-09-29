@@ -14,8 +14,7 @@ import {
   User,
   Search,
   Check,
-  Plus,
-  BookOpen
+  Plus
 } from 'lucide-react';
 
 // University Evaluation Criteria
@@ -73,7 +72,7 @@ const EVALUATION_CRITERIA = [
 ];
 
 export default function StudentPortal() {
-  // Login & Navigation States
+  // Navigation & Form States
   const [prnInput, setPrnInput] = useState('');
   const [activePRN, setActivePRN] = useState(null);
   const [step, setStep] = useState('login'); // 'login' | 'select_instructors' | 'dashboard'
@@ -83,6 +82,7 @@ export default function StudentPortal() {
   const [selectedOfferingIds, setSelectedOfferingIds] = useState(new Set());
   const [submittedOfferingIds, setSubmittedOfferingIds] = useState(new Set());
   const [loading, setLoading] = useState(false);
+  const [savingSelections, setSavingSelections] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Modal State
@@ -91,7 +91,7 @@ export default function StudentPortal() {
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Step 1: Handle PRN Entry and fetch instructors from Supabase
+  // Step 1: Login & Verify Existing Selections in Supabase
   const handlePRNSubmit = async (e) => {
     e.preventDefault();
     const cleanPRN = prnInput.trim().toUpperCase();
@@ -99,7 +99,7 @@ export default function StudentPortal() {
 
     setLoading(true);
 
-    // Fetch master list of faculty and course offerings from Supabase
+    // 1. Fetch master list of faculty and course offerings
     const { data: offeringsData, error: offError } = await supabase
       .from('course_offerings')
       .select(`
@@ -108,36 +108,47 @@ export default function StudentPortal() {
         faculty (id, name, department)
       `);
 
-    setLoading(false);
-
-    if (offError) {
-      alert('Error fetching instructors from database: ' + offError.message);
+    if (offError || !offeringsData || offeringsData.length === 0) {
+      setLoading(false);
+      alert('Error fetching course offerings from database: ' + (offError?.message || 'No courses found.'));
       return;
     }
 
-    if (!offeringsData || offeringsData.length === 0) {
-      alert('No instructors found in database. Please ask administration to add faculty and courses.');
-      return;
-    }
-
-    setActivePRN(cleanPRN);
-    setAllOfferings(offeringsData);
-    await fetchExistingSubmissions(cleanPRN);
-    setStep('select_instructors');
-  };
-
-  // Fetch Submissions to detect already evaluated instructors
-  const fetchExistingSubmissions = async (prn) => {
+    // 2. Fetch existing submissions from feedback_submissions
     const { data: submissions } = await supabase
       .from('feedback_submissions')
       .select('course_offering_id')
-      .eq('student_prn', prn);
+      .eq('student_prn', cleanPRN);
 
     const lockedSet = new Set((submissions || []).map((s) => s.course_offering_id));
     setSubmittedOfferingIds(lockedSet);
+
+    // 3. Fetch previously saved instructor selections from Supabase
+    const { data: existingSelections } = await supabase
+      .from('student_course_selections')
+      .select('course_offering_id')
+      .eq('student_prn', cleanPRN);
+
+    // Combine previous saved selections and any existing submissions
+    const mergedSelectedIds = new Set([
+      ...(existingSelections || []).map((s) => s.course_offering_id),
+      ...Array.from(lockedSet)
+    ]);
+
+    setActivePRN(cleanPRN);
+    setAllOfferings(offeringsData);
+    setSelectedOfferingIds(mergedSelectedIds);
+    setLoading(false);
+
+    // ROUTING LOGIC: If student has already selected instructors, jump straight to dashboard
+    if (mergedSelectedIds.size > 0) {
+      setStep('dashboard');
+    } else {
+      setStep('select_instructors');
+    }
   };
 
-  // Toggle Selection of Instructor/Course during login step
+  // Toggle Selection of Instructor/Course
   const toggleOfferingSelection = (id) => {
     const nextSet = new Set(selectedOfferingIds);
     if (nextSet.has(id)) {
@@ -148,12 +159,32 @@ export default function StudentPortal() {
     setSelectedOfferingIds(nextSet);
   };
 
-  // Proceed to Dashboard after selecting instructors
-  const handleConfirmInstructors = () => {
+  // Confirm Instructor Selection & Save directly to Supabase
+  const handleConfirmInstructors = async () => {
     if (selectedOfferingIds.size === 0) {
       alert('Please select at least one instructor/course to continue.');
       return;
     }
+
+    setSavingSelections(true);
+
+    // Prepare payload to sync with student_course_selections table
+    const payload = Array.from(selectedOfferingIds).map((offeringId) => ({
+      student_prn: activePRN,
+      course_offering_id: offeringId
+    }));
+
+    // Upsert into Supabase so subsequent logins skip selection screen
+    const { error } = await supabase
+      .from('student_course_selections')
+      .upsert(payload, { onConflict: 'student_prn,course_offering_id' });
+
+    setSavingSelections(false);
+
+    if (error) {
+      console.warn('Could not sync selections to database:', error.message);
+    }
+
     setStep('dashboard');
   };
 
@@ -214,10 +245,12 @@ export default function StudentPortal() {
 
     await supabase.from('feedback_ratings').insert(ratingsPayload);
 
+    // Update local state to reflect lock
+    setSubmittedOfferingIds((prev) => new Set([...prev, modalOffering.id]));
+
     setSubmitting(false);
     setModalOffering(null);
     alert('Feedback submitted and locked successfully!');
-    await fetchExistingSubmissions(activePRN);
   };
 
   const logout = () => {
@@ -225,11 +258,12 @@ export default function StudentPortal() {
     setPrnInput('');
     setAllOfferings([]);
     setSelectedOfferingIds(new Set());
+    setSubmittedOfferingIds(new Set());
     setSearchQuery('');
     setStep('login');
   };
 
-  // Filter offerings based on search input
+  // Search Filter
   const filteredOfferings = allOfferings.filter((off) => {
     const q = searchQuery.toLowerCase();
     const courseCode = off.courses?.code?.toLowerCase() || '';
@@ -241,7 +275,7 @@ export default function StudentPortal() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
-      {/* Navigation Header */}
+      {/* Header */}
       <header className="bg-indigo-900 text-white shadow-md sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -280,8 +314,8 @@ export default function StudentPortal() {
                 <GraduationCap className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-indigo-900">Student Access</h2>
-                <p className="text-xs text-slate-500">Enter your PRN to choose your instructors</p>
+                <h2 className="text-xl font-bold text-indigo-900">Student Portal Access</h2>
+                <p className="text-xs text-slate-500">Enter your PRN to sign in</p>
               </div>
             </div>
 
@@ -302,7 +336,7 @@ export default function StudentPortal() {
                 disabled={loading}
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl text-sm shadow-md transition-all flex items-center justify-center space-x-2"
               >
-                <span>{loading ? 'Fetching Instructors...' : 'Continue to Instructor Selection'}</span>
+                <span>{loading ? 'Verifying & Syncing...' : 'Log In'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
@@ -315,13 +349,14 @@ export default function StudentPortal() {
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
                 <h2 className="text-xl font-bold text-slate-900">Select Your Instructors</h2>
-                <p className="text-xs text-slate-500 mt-1">Choose the instructors and courses you are taking this semester from the database.</p>
+                <p className="text-xs text-slate-500 mt-1">Select the courses and instructors you are attending this semester. Your choices will be synced.</p>
               </div>
               <button
                 onClick={handleConfirmInstructors}
+                disabled={savingSelections}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl text-xs font-semibold shadow-md transition flex items-center space-x-2"
               >
-                <span>Proceed with ({selectedOfferingIds.size}) Selected</span>
+                <span>{savingSelections ? 'Syncing...' : `Confirm (${selectedOfferingIds.size}) Selected`}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>
@@ -382,7 +417,7 @@ export default function StudentPortal() {
           </div>
         )}
 
-        {/* STEP 3: EVALUATION DASHBOARD */}
+        {/* STEP 3: DASHBOARD */}
         {step === 'dashboard' && (
           <div className="space-y-6">
             <div className="bg-gradient-to-r from-indigo-800 to-indigo-900 text-white rounded-2xl p-6 shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -392,18 +427,18 @@ export default function StudentPortal() {
                   <span>Active Term: Faculty Feedback Session</span>
                 </div>
                 <h2 className="text-2xl font-bold">Your Selected Instructors</h2>
-                <p className="text-indigo-200 text-xs">Evaluate your instructors below. Once submitted, ratings cannot be modified.</p>
+                <p className="text-indigo-200 text-xs">Evaluate your instructors below. Once submitted, feedback is locked.</p>
               </div>
               <button
                 onClick={() => setStep('select_instructors')}
                 className="bg-indigo-700 hover:bg-indigo-600 text-white text-xs px-4 py-2 rounded-xl border border-indigo-500 flex items-center space-x-1.5 transition"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Add / Modify Instructors</span>
+                <span>Add / Edit Instructors</span>
               </button>
             </div>
 
-            {/* Selected Instructors List */}
+            {/* Display Selected Instructors */}
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
               {allOfferings
                 .filter((off) => selectedOfferingIds.has(off.id))
