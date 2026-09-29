@@ -13,10 +13,12 @@ import {
   Send,
   User,
   Search,
+  Check,
+  Plus,
   BookOpen
 } from 'lucide-react';
 
-// University Criteria List
+// University Evaluation Criteria
 const EVALUATION_CRITERIA = [
   {
     id: 1,
@@ -71,9 +73,14 @@ const EVALUATION_CRITERIA = [
 ];
 
 export default function StudentPortal() {
+  // Login & Navigation States
   const [prnInput, setPrnInput] = useState('');
   const [activePRN, setActivePRN] = useState(null);
-  const [offerings, setOfferings] = useState([]);
+  const [step, setStep] = useState('login'); // 'login' | 'select_instructors' | 'dashboard'
+
+  // Supabase Data States
+  const [allOfferings, setAllOfferings] = useState([]);
+  const [selectedOfferingIds, setSelectedOfferingIds] = useState(new Set());
   const [submittedOfferingIds, setSubmittedOfferingIds] = useState(new Set());
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -84,15 +91,15 @@ export default function StudentPortal() {
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Handle Student Login (No binding required)
-  const handleLogin = async (e) => {
+  // Step 1: Handle PRN Entry and fetch instructors from Supabase
+  const handlePRNSubmit = async (e) => {
     e.preventDefault();
     const cleanPRN = prnInput.trim().toUpperCase();
     if (!cleanPRN) return;
 
     setLoading(true);
 
-    // Fetch all active faculty and course offerings in the university
+    // Fetch master list of faculty and course offerings from Supabase
     const { data: offeringsData, error: offError } = await supabase
       .from('course_offerings')
       .select(`
@@ -104,21 +111,22 @@ export default function StudentPortal() {
     setLoading(false);
 
     if (offError) {
-      alert('Error fetching course offerings: ' + offError.message);
+      alert('Error fetching instructors from database: ' + offError.message);
       return;
     }
 
     if (!offeringsData || offeringsData.length === 0) {
-      alert('No course offerings found in the system. Please ask administration to add faculty members and courses.');
+      alert('No instructors found in database. Please ask administration to add faculty and courses.');
       return;
     }
 
     setActivePRN(cleanPRN);
-    setOfferings(offeringsData);
+    setAllOfferings(offeringsData);
     await fetchExistingSubmissions(cleanPRN);
+    setStep('select_instructors');
   };
 
-  // Fetch Submissions to enforce single submission locking
+  // Fetch Submissions to detect already evaluated instructors
   const fetchExistingSubmissions = async (prn) => {
     const { data: submissions } = await supabase
       .from('feedback_submissions')
@@ -127,6 +135,26 @@ export default function StudentPortal() {
 
     const lockedSet = new Set((submissions || []).map((s) => s.course_offering_id));
     setSubmittedOfferingIds(lockedSet);
+  };
+
+  // Toggle Selection of Instructor/Course during login step
+  const toggleOfferingSelection = (id) => {
+    const nextSet = new Set(selectedOfferingIds);
+    if (nextSet.has(id)) {
+      nextSet.delete(id);
+    } else {
+      nextSet.add(id);
+    }
+    setSelectedOfferingIds(nextSet);
+  };
+
+  // Proceed to Dashboard after selecting instructors
+  const handleConfirmInstructors = () => {
+    if (selectedOfferingIds.size === 0) {
+      alert('Please select at least one instructor/course to continue.');
+      return;
+    }
+    setStep('dashboard');
   };
 
   // Open Evaluation Modal
@@ -139,7 +167,7 @@ export default function StudentPortal() {
       .maybeSingle();
 
     if (existing) {
-      alert('Feedback has already been submitted and locked for this course offering!');
+      alert('Feedback has already been submitted and locked for this instructor!');
       return;
     }
 
@@ -148,7 +176,7 @@ export default function StudentPortal() {
     setComment('');
   };
 
-  // Submit Feedback
+  // Submit Feedback to Supabase
   const handleSubmitFeedback = async (e) => {
     e.preventDefault();
 
@@ -177,7 +205,7 @@ export default function StudentPortal() {
       return;
     }
 
-    // 2. Insert All Ratings
+    // 2. Insert Ratings
     const ratingsPayload = Object.entries(ratings).map(([critId, rating]) => ({
       submission_id: sub.id,
       criteria_id: parseInt(critId),
@@ -195,12 +223,14 @@ export default function StudentPortal() {
   const logout = () => {
     setActivePRN(null);
     setPrnInput('');
-    setOfferings([]);
+    setAllOfferings([]);
+    setSelectedOfferingIds(new Set());
     setSearchQuery('');
+    setStep('login');
   };
 
-  // Filter offerings based on student search input
-  const filteredOfferings = offerings.filter((off) => {
+  // Filter offerings based on search input
+  const filteredOfferings = allOfferings.filter((off) => {
     const q = searchQuery.toLowerCase();
     const courseCode = off.courses?.code?.toLowerCase() || '';
     const courseName = off.courses?.name?.toLowerCase() || '';
@@ -211,7 +241,7 @@ export default function StudentPortal() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
-      {/* Top Navigation Header */}
+      {/* Navigation Header */}
       <header className="bg-indigo-900 text-white shadow-md sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -241,20 +271,21 @@ export default function StudentPortal() {
 
       {/* Main Container */}
       <main className="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {!activePRN ? (
-          /* LOGIN SCREEN */
+        
+        {/* STEP 1: PRN LOGIN */}
+        {step === 'login' && (
           <div className="max-w-md mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-200 mt-12">
             <div className="flex items-center space-x-3 mb-6">
               <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-lg font-bold">
                 <GraduationCap className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-indigo-900">Student Portal Access</h2>
-                <p className="text-xs text-slate-500">Enter your PRN to view and evaluate courses</p>
+                <h2 className="text-xl font-bold text-indigo-900">Student Access</h2>
+                <p className="text-xs text-slate-500">Enter your PRN to choose your instructors</p>
               </div>
             </div>
 
-            <form onSubmit={handleLogin} className="space-y-4">
+            <form onSubmit={handlePRNSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1.5">Permanent Registration Number (PRN)</label>
                 <input
@@ -262,7 +293,7 @@ export default function StudentPortal() {
                   value={prnInput}
                   onChange={(e) => setPrnInput(e.target.value)}
                   required
-                  placeholder="Enter your PRN (e.g. 2024BTAM001)"
+                  placeholder="Enter your PRN"
                   className="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none transition uppercase"
                 />
               </div>
@@ -271,13 +302,88 @@ export default function StudentPortal() {
                 disabled={loading}
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl text-sm shadow-md transition-all flex items-center justify-center space-x-2"
               >
-                <span>{loading ? 'Accessing...' : 'Access Portal'}</span>
+                <span>{loading ? 'Fetching Instructors...' : 'Continue to Instructor Selection'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
           </div>
-        ) : (
-          /* DASHBOARD VIEW */
+        )}
+
+        {/* STEP 2: SELECT INSTRUCTORS & COURSES */}
+        {step === 'select_instructors' && (
+          <div className="space-y-6">
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">Select Your Instructors</h2>
+                <p className="text-xs text-slate-500 mt-1">Choose the instructors and courses you are taking this semester from the database.</p>
+              </div>
+              <button
+                onClick={handleConfirmInstructors}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl text-xs font-semibold shadow-md transition flex items-center space-x-2"
+              >
+                <span>Proceed with ({selectedOfferingIds.size}) Selected</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Search Filter */}
+            <div className="relative max-w-md">
+              <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search by faculty name, course, or department..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
+            {/* Instructor Selection Grid */}
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {filteredOfferings.map((off) => {
+                const isSelected = selectedOfferingIds.has(off.id);
+                const isAlreadySubmitted = submittedOfferingIds.has(off.id);
+
+                return (
+                  <div
+                    key={off.id}
+                    onClick={() => toggleOfferingSelection(off.id)}
+                    className={`cursor-pointer rounded-2xl p-5 border transition-all flex items-start justify-between ${
+                      isSelected
+                        ? 'border-indigo-600 bg-indigo-50/50 shadow-md ring-2 ring-indigo-500'
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="space-y-2">
+                      <span className="text-xs font-bold px-2.5 py-0.5 rounded bg-slate-100 text-slate-700">
+                        {off.courses?.code || 'COURSE'}
+                      </span>
+                      <h4 className="font-bold text-slate-900 text-sm">{off.courses?.name}</h4>
+                      <p className="text-xs text-slate-600 flex items-center space-x-1">
+                        <User className="w-3.5 h-3.5 text-indigo-500" />
+                        <span><strong>{off.faculty?.name}</strong> ({off.faculty?.department})</span>
+                      </p>
+                      {isAlreadySubmitted && (
+                        <span className="inline-block text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-semibold mt-1">
+                          Feedback Previously Submitted
+                        </span>
+                      )}
+                    </div>
+
+                    <div className={`w-6 h-6 rounded-full flex items-center justify-center border transition ${
+                      isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 text-transparent'
+                    }`}>
+                      <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* STEP 3: EVALUATION DASHBOARD */}
+        {step === 'dashboard' && (
           <div className="space-y-6">
             <div className="bg-gradient-to-r from-indigo-800 to-indigo-900 text-white rounded-2xl p-6 shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div className="space-y-1">
@@ -285,94 +391,82 @@ export default function StudentPortal() {
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
                   <span>Active Term: Faculty Feedback Session</span>
                 </div>
-                <h2 className="text-2xl font-bold">Faculty Evaluation Portal</h2>
-                <p className="text-indigo-200 text-xs">Select your instructors and courses below. Feedback locks immediately after submission.</p>
+                <h2 className="text-2xl font-bold">Your Selected Instructors</h2>
+                <p className="text-indigo-200 text-xs">Evaluate your instructors below. Once submitted, ratings cannot be modified.</p>
               </div>
-              <div className="bg-indigo-950/60 p-4 rounded-xl border border-indigo-700/50">
-                <p className="text-[10px] text-indigo-300 uppercase tracking-wider font-semibold">Active Session</p>
-                <p className="text-sm font-bold font-mono text-white mt-0.5">{activePRN}</p>
-              </div>
+              <button
+                onClick={() => setStep('select_instructors')}
+                className="bg-indigo-700 hover:bg-indigo-600 text-white text-xs px-4 py-2 rounded-xl border border-indigo-500 flex items-center space-x-1.5 transition"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add / Modify Instructors</span>
+              </button>
             </div>
 
-            {/* Search & Filter Bar */}
-            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-              <div className="relative w-full sm:w-96">
-                <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search course code, name, or faculty..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 text-xs border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-              <div className="text-xs text-slate-500 font-medium">
-                Showing <strong className="text-slate-800">{filteredOfferings.length}</strong> available course offerings
-              </div>
-            </div>
-
-            {/* Offerings Grid */}
+            {/* Selected Instructors List */}
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {filteredOfferings.map((off) => {
-                const isLocked = submittedOfferingIds.has(off.id);
-                const courseCode = off.courses?.code || 'COURSE';
-                const courseName = off.courses?.name || 'Course Subject';
-                const facultyName = off.faculty?.name || 'Faculty Member';
-                const department = off.faculty?.department || 'General';
+              {allOfferings
+                .filter((off) => selectedOfferingIds.has(off.id))
+                .map((off) => {
+                  const isLocked = submittedOfferingIds.has(off.id);
+                  const courseCode = off.courses?.code || 'COURSE';
+                  const courseName = off.courses?.name || 'Course Subject';
+                  const facultyName = off.faculty?.name || 'Faculty Member';
+                  const department = off.faculty?.department || 'General';
 
-                return (
-                  <div
-                    key={off.id}
-                    className={`bg-white rounded-2xl p-6 border ${
-                      isLocked ? 'border-emerald-300 bg-emerald-50/20' : 'border-slate-200 hover:border-indigo-300 hover:shadow-md'
-                    } shadow-xs flex flex-col justify-between transition-all`}
-                  >
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className={`text-xs font-bold px-2.5 py-1 rounded-lg ${isLocked ? 'bg-emerald-100 text-emerald-800' : 'bg-indigo-50 text-indigo-700'}`}>
-                          {courseCode}
-                        </span>
+                  return (
+                    <div
+                      key={off.id}
+                      className={`bg-white rounded-2xl p-6 border ${
+                        isLocked ? 'border-emerald-300 bg-emerald-50/20' : 'border-slate-200 hover:border-indigo-300 hover:shadow-md'
+                      } shadow-xs flex flex-col justify-between transition-all`}
+                    >
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className={`text-xs font-bold px-2.5 py-1 rounded-lg ${isLocked ? 'bg-emerald-100 text-emerald-800' : 'bg-indigo-50 text-indigo-700'}`}>
+                            {courseCode}
+                          </span>
+                          {isLocked ? (
+                            <span className="inline-flex items-center space-x-1 text-xs font-semibold text-emerald-700 bg-emerald-100/80 px-2.5 py-1 rounded-full">
+                              <Lock className="w-3 h-3 text-emerald-600" />
+                              <span>Locked & Completed</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center space-x-1 text-xs font-medium text-amber-600 bg-amber-50 px-2.5 py-1 rounded-full">
+                              <Clock className="w-3 h-3" />
+                              <span>Pending</span>
+                            </span>
+                          )}
+                        </div>
+
+                        <div>
+                          <h4 className="font-bold text-slate-900 text-base leading-snug">{courseName}</h4>
+                          <p className="text-xs text-slate-500 mt-1 flex items-center space-x-1.5">
+                            <User className="w-3.5 h-3.5 text-indigo-500" />
+                            <span>Faculty: <strong className="text-slate-700">{facultyName}</strong> ({department})</span>
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-6 pt-4 border-t border-slate-100">
                         {isLocked ? (
-                          <span className="inline-flex items-center space-x-1 text-xs font-semibold text-emerald-700 bg-emerald-100/80 px-2.5 py-1 rounded-full">
-                            <Lock className="w-3 h-3 text-emerald-600" />
-                            <span>Locked & Completed</span>
-                          </span>
+                          <button disabled className="w-full bg-slate-100 text-slate-400 font-semibold px-4 py-2.5 rounded-xl text-xs cursor-not-allowed flex items-center justify-center space-x-2 border border-slate-200">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                            <span>Feedback Submitted & Locked</span>
+                          </button>
                         ) : (
-                          <span className="inline-flex items-center space-x-1 text-xs font-medium text-amber-600 bg-amber-50 px-2.5 py-1 rounded-full">
-                            <Clock className="w-3 h-3" />
-                            <span>Pending</span>
-                          </span>
+                          <button
+                            onClick={() => openFeedbackModal(off)}
+                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-xs transition flex items-center justify-center space-x-1.5"
+                          >
+                            <span>Evaluate Instructor</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </button>
                         )}
                       </div>
-
-                      <div>
-                        <h4 className="font-bold text-slate-900 text-base leading-snug">{courseName}</h4>
-                        <p className="text-xs text-slate-500 mt-1 flex items-center space-x-1.5">
-                          <User className="w-3.5 h-3.5 text-indigo-500" />
-                          <span>Faculty: <strong className="text-slate-700">{facultyName}</strong> ({department})</span>
-                        </p>
-                      </div>
                     </div>
-
-                    <div className="mt-6 pt-4 border-t border-slate-100">
-                      {isLocked ? (
-                        <button disabled className="w-full bg-slate-100 text-slate-400 font-semibold px-4 py-2.5 rounded-xl text-xs cursor-not-allowed flex items-center justify-center space-x-2 border border-slate-200">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                          <span>Feedback Submitted & Locked</span>
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => openFeedbackModal(off)}
-                          className="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-xs transition flex items-center justify-center space-x-1.5"
-                        >
-                          <span>Evaluate Instructor</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
             </div>
           </div>
         )}
