@@ -260,7 +260,7 @@ export default function AdminDashboard() {
   <img 
     src="/logo.png" 
     alt="Joy University Logo" 
-    className="w-full h-full object-contain rounded-lg"
+    className="w-full h-full object-cover"
   />
 </div>
             <div>
