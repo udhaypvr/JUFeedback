@@ -256,7 +256,7 @@ export default function AdminDashboard() {
       <header className="bg-indigo-900 text-white shadow-md sticky top-0 z-30">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
-<div className="bg-white p-1 shadow w-10 h-10 flex items-center justify-center overflow-hidden">
+<div className="bg-white shadow w-10 h-10 flex items-center justify-center overflow-hidden">
   <img 
     src="/logo.png" 
     alt="Joy University Logo" 
