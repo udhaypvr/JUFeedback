@@ -560,6 +560,9 @@ export default function AdminDashboard() {
           </>
         )}
       </main>
+      <footer className="bg-[#520000] text-white py-4 text-center text-sm font-medium tracking-wide border-t border-[#3d0000] mt-8">
+        Copyright @ 2026 &nbsp;|&nbsp; Joy University
+      </footer>
     </div>
   );
 }
