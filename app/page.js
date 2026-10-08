@@ -65,83 +65,55 @@ export default function StudentPortal() {
     return sem;
   };
 
- const handlePRNSubmit = async (e) => {
-  e.preventDefault();
-  const cleanPRN = prnInput.trim().toUpperCase();
-  if (!cleanPRN) return;
+  const handlePRNSubmit = async (e) => {
+    e.preventDefault();
+    const cleanPRN = prnInput.trim().toUpperCase();
+    if (!cleanPRN) return;
 
-  setLoading(true);
+    setLoading(true);
 
-  // 1. VERIFY PRN IN STUDENTS TABLE
-  const { data: studentData, error: studentError } = await supabase
-    .from('students')
-    .select('*')
-    .eq('prn', cleanPRN)
-    .maybeSingle();
+    const calculatedSem = calculateSemesterFromPRN(cleanPRN);
+    setStudentSemester(calculatedSem);
 
-  if (studentError || !studentData) {
-    setLoading(false);
-    alert('Access Denied: PRN is not registered for this evaluation session.');
-    return;
-  }
+    // Fetch offerings filtered by student's semester
+    const { data: offeringsData, error: offError } = await supabase
+      .from('course_offerings')
+      .select(`
+        id,
+        batch,
+        section,
+        semester,
+        courses:course_code (code, name, school, programme),
+        faculty:employee_id (employee_id, name, school)
+      `)
+      .eq('semester', calculatedSem);
 
-  // 2. FETCH FACULTY OFFERINGS MATCHING STUDENT'S BATCH & PROGRAMME
-  let query = supabase
-    .from('course_offerings')
-    .select(`
-      id,
-      batch,
-      section,
-      semester,
-      programme,
-      courses:course_code (code, name, school, programme),
-      faculty:employee_id (employee_id, name, school)
-    `);
+    if (offError) {
+      setLoading(false);
+      alert('Error fetching course offerings: ' + offError.message);
+      return;
+    }
 
-  if (studentData.batch) query = query.eq('batch', studentData.batch);
-  if (studentData.programme) query = query.eq('programme', studentData.programme);
-  if (studentData.semester) query = query.eq('semester', studentData.semester);
+    // Fetch existing submissions
+    const { data: submissions } = await supabase
+      .from('feedback_submissions')
+      .select('course_offering_id')
+      .eq('student_prn', cleanPRN);
 
-  const { data: offeringsData, error: offError } = await query;
+    const lockedSet = new Set((submissions || []).map((s) => s.course_offering_id));
+    setSubmittedOfferingIds(lockedSet);
 
-  if (offError || !offeringsData || offeringsData.length === 0) {
-    setLoading(false);
-    alert(`No faculty evaluations found for Batch: ${studentData.batch}, Programme: ${studentData.programme}`);
-    return;
-  }
+    // Fetch saved selections
+    const { data: existingSelections } = await supabase
+      .from('student_course_selections')
+      .select('course_offering_id')
+      .eq('student_prn', cleanPRN);
 
-  // 3. FETCH SUBMISSIONS & PREVIOUS SELECTIONS
-  const { data: submissions } = await supabase
-    .from('feedback_submissions')
-    .select('course_offering_id')
-    .eq('student_prn', cleanPRN);
+    const mergedSelectedIds = new Set([
+      ...(existingSelections || []).map((s) => s.course_offering_id),
+      ...Array.from(lockedSet)
+    ]);
 
-  const lockedSet = new Set((submissions || []).map((s) => s.course_offering_id));
-  setSubmittedOfferingIds(lockedSet);
-
-  const { data: existingSelections } = await supabase
-    .from('student_course_selections')
-    .select('course_offering_id')
-    .eq('student_prn', cleanPRN);
-
-  const mergedSelectedIds = new Set([
-    ...(existingSelections || []).map((s) => s.course_offering_id),
-    ...Array.from(lockedSet)
-  ]);
-
-  setActivePRN(cleanPRN);
-  setStudentSemester(studentData.semester);
-  setAllOfferings(offeringsData);
-  setSelectedOfferingIds(mergedSelectedIds);
-  setLoading(false);
-
-  // Jump straight to dashboard if selections exist, otherwise selection screen
-  if (mergedSelectedIds.size > 0) {
-    setStep('dashboard');
-  } else {
-    setStep('select_instructors');
-  }
-};
     setActivePRN(cleanPRN);
     setAllOfferings(offeringsData || []);
     setSelectedOfferingIds(mergedSelectedIds);
