@@ -1,6 +1,5 @@
 'use client';
 
-
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { 
@@ -16,7 +15,7 @@ import {
   Search,
   Check,
   Plus,
-  BookOpen
+  AlertCircle
 } from 'lucide-react';
 
 const EVALUATION_CRITERIA = [
@@ -34,6 +33,7 @@ const EVALUATION_CRITERIA = [
 
 export default function StudentPortal() {
   const [prnInput, setPrnInput] = useState('');
+  const [prnError, setPrnError] = useState('');
   const [activePRN, setActivePRN] = useState(null);
   const [studentSemester, setStudentSemester] = useState(null);
   const [step, setStep] = useState('login'); // 'login' | 'select_instructors' | 'dashboard'
@@ -50,51 +50,53 @@ export default function StudentPortal() {
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Helper: Extract Semester from PRN
-  const calculateSemesterFromPRN = (prn) => {
-    const yearMatch = prn.match(/^\d{4}/);
-    if (!yearMatch) return 5; // Default fallback to Semester 5
-
-    const joinYear = parseInt(yearMatch[0], 10);
-    const currentYear = new Date().getFullYear(); // e.g., 2026
-    
-    // Formula: (CurrentYear - JoinYear) * 2 + 1 (for odd term e.g. 5th sem)
-    let sem = (currentYear - joinYear) * 2 + 1;
-    if (sem < 1) sem = 1;
-    if (sem > 8) sem = 8;
-    return sem;
-  };
-
   const handlePRNSubmit = async (e) => {
     e.preventDefault();
     const cleanPRN = prnInput.trim().toUpperCase();
     if (!cleanPRN) return;
 
     setLoading(true);
+    setPrnError('');
 
-    const calculatedSem = calculateSemesterFromPRN(cleanPRN);
-    setStudentSemester(calculatedSem);
+    // 1. VERIFY PRN IN STUDENTS WHITELIST TABLE
+    const { data: studentData, error: studentError } = await supabase
+      .from('students')
+      .select('*')
+      .eq('prn', cleanPRN)
+      .maybeSingle();
 
-    // Fetch offerings filtered by student's semester
-    const { data: offeringsData, error: offError } = await supabase
+    if (studentError || !studentData) {
+      setLoading(false);
+      setPrnError('Access Denied: PRN is not registered for this evaluation session.');
+      return;
+    }
+
+    // 2. FETCH FACULTY OFFERINGS MATCHING STUDENT'S BATCH, PROGRAMME & SEMESTER
+    let query = supabase
       .from('course_offerings')
       .select(`
         id,
         batch,
         section,
         semester,
+        programme,
         courses:course_code (code, name, school, programme),
         faculty:employee_id (employee_id, name, school)
-      `)
-      .eq('semester', calculatedSem);
+      `);
 
-    if (offError) {
+    if (studentData.batch) query = query.eq('batch', studentData.batch);
+    if (studentData.programme) query = query.eq('programme', studentData.programme);
+    if (studentData.semester) query = query.eq('semester', studentData.semester);
+
+    const { data: offeringsData, error: offError } = await query;
+
+    if (offError || !offeringsData || offeringsData.length === 0) {
       setLoading(false);
-      alert('Error fetching course offerings: ' + offError.message);
+      setPrnError(`No faculty evaluations found for Batch: ${studentData.batch}, Programme: ${studentData.programme}`);
       return;
     }
 
-    // Fetch existing submissions
+    // 3. FETCH SUBMISSIONS & PREVIOUS SELECTIONS
     const { data: submissions } = await supabase
       .from('feedback_submissions')
       .select('course_offering_id')
@@ -103,7 +105,6 @@ export default function StudentPortal() {
     const lockedSet = new Set((submissions || []).map((s) => s.course_offering_id));
     setSubmittedOfferingIds(lockedSet);
 
-    // Fetch saved selections
     const { data: existingSelections } = await supabase
       .from('student_course_selections')
       .select('course_offering_id')
@@ -115,10 +116,12 @@ export default function StudentPortal() {
     ]);
 
     setActivePRN(cleanPRN);
-    setAllOfferings(offeringsData || []);
+    setStudentSemester(studentData.semester);
+    setAllOfferings(offeringsData);
     setSelectedOfferingIds(mergedSelectedIds);
     setLoading(false);
 
+    // Jump directly to dashboard if selections already exist, otherwise instructor selection screen
     if (mergedSelectedIds.size > 0) {
       setStep('dashboard');
     } else {
@@ -215,6 +218,7 @@ export default function StudentPortal() {
   const logout = () => {
     setActivePRN(null);
     setPrnInput('');
+    setPrnError('');
     setAllOfferings([]);
     setSelectedOfferingIds(new Set());
     setSubmittedOfferingIds(new Set());
@@ -236,13 +240,13 @@ export default function StudentPortal() {
       <header className="bg-indigo-900 text-white shadow-md sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
-<div className="bg-white w-10 h-10 shadow flex items-center justify-center overflow-hidden p-[3px]">
-  <img 
-    src="/logo.png" 
-    alt="Joy University Logo" 
-    className="w-full h-full object-contain"
-  />
-</div>
+            <div className="bg-white w-10 h-10 shadow flex items-center justify-center overflow-hidden p-[3px]">
+              <img 
+                src="/logo.png" 
+                alt="Joy University Logo" 
+                className="w-full h-full object-contain"
+              />
+            </div>
             <div>
               <h1 className="font-bold text-lg leading-tight">Joy University</h1>
               <p className="text-xs text-indigo-200 tracking-wide">Student Feedback Portal</p>
@@ -273,7 +277,7 @@ export default function StudentPortal() {
               </div>
               <div>
                 <h2 className="text-xl font-bold text-indigo-900">Student Portal Access</h2>
-                <p className="text-xs text-slate-500">Enter your PRN to fetch semester instructors</p>
+                <p className="text-xs text-slate-500">Enter your registered PRN to view evaluations</p>
               </div>
             </div>
 
@@ -283,18 +287,29 @@ export default function StudentPortal() {
                 <input
                   type="text"
                   value={prnInput}
-                  onChange={(e) => setPrnInput(e.target.value)}
+                  onChange={(e) => {
+                    setPrnInput(e.target.value);
+                    if (prnError) setPrnError('');
+                  }}
                   required
-                  placeholder="Enter PRN (e.g., 2024BTAM001)"
+                  placeholder="Enter PRN (e.g., 2025MBBA001)"
                   className="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none transition uppercase"
                 />
+
+                {prnError && (
+                  <div className="mt-2 text-xs font-bold text-rose-600 bg-rose-50 border border-rose-200 p-3 rounded-xl flex items-center space-x-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                    <span>{prnError}</span>
+                  </div>
+                )}
               </div>
+
               <button
                 type="submit"
                 disabled={loading}
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl text-sm shadow-md transition-all flex items-center justify-center space-x-2"
               >
-                <span>{loading ? 'Determining Semester & Syncing...' : 'Log In'}</span>
+                <span>{loading ? 'Verifying Authorization...' : 'Log In'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
@@ -546,6 +561,8 @@ export default function StudentPortal() {
           </div>
         </div>
       )}
+
+      {/* Footer */}
       <footer className="bg-[#520000] text-white py-4 text-center text-sm font-medium tracking-wide border-t border-[#3d0000] mt-8">
         Copyright @ 2026 &nbsp;|&nbsp; Joy University
       </footer>
