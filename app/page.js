@@ -50,7 +50,7 @@ export default function StudentPortal() {
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const handlePRNSubmit = async (e) => {
+const handlePRNSubmit = async (e) => {
     e.preventDefault();
     const cleanPRN = prnInput.trim().toUpperCase();
     if (!cleanPRN) return;
@@ -58,6 +58,7 @@ export default function StudentPortal() {
     setLoading(true);
     setPrnError('');
 
+    // 1. VERIFY PRN IN STUDENTS TABLE
     const { data: studentData, error: studentError } = await supabase
       .from('students')
       .select('*')
@@ -70,6 +71,7 @@ export default function StudentPortal() {
       return;
     }
 
+    // 2. FETCH FACULTY OFFERINGS BASED ONLY ON PROGRAMME AND SEMESTER (No Batch lock)
     let query = supabase
       .from('course_offerings')
       .select(`
@@ -82,18 +84,37 @@ export default function StudentPortal() {
         faculty:employee_id (employee_id, name, school)
       `);
 
-    if (studentData.batch) query = query.eq('batch', studentData.batch);
+    // Match strictly by Programme and Semester
     if (studentData.programme) query = query.eq('programme', studentData.programme);
     if (studentData.semester) query = query.eq('semester', studentData.semester);
 
-    const { data: offeringsData, error: offError } = await query;
+    let { data: offeringsData, error: offError } = await query;
 
-    if (offError || !offeringsData || offeringsData.length === 0) {
+    // Fallback: If no offerings match the exact semester, fetch all offerings for the programme
+    if ((!offeringsData || offeringsData.length === 0) && studentData.programme) {
+      const fallbackQuery = await supabase
+        .from('course_offerings')
+        .select(`
+          id,
+          batch,
+          section,
+          semester,
+          programme,
+          courses:course_code (code, name, school, programme),
+          faculty:employee_id (employee_id, name, school)
+        `)
+        .eq('programme', studentData.programme);
+
+      offeringsData = fallbackQuery.data;
+    }
+
+    if (!offeringsData || offeringsData.length === 0) {
       setLoading(false);
-      setPrnError(`No faculty evaluations found for Batch: ${studentData.batch}, Programme: ${studentData.programme}`);
+      setPrnError(`No faculty evaluations found for Programme: ${studentData.programme || 'All Programmes'}`);
       return;
     }
 
+    // 3. FETCH SUBMISSIONS & PREVIOUS SELECTIONS
     const { data: submissions } = await supabase
       .from('feedback_submissions')
       .select('course_offering_id')
