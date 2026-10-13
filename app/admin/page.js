@@ -111,7 +111,7 @@ export default function AdminDashboard() {
     setLoading(false);
   };
 
-  const loadFacultyDetails = async (employeeId) => {
+const loadFacultyDetails = async (employeeId) => {
     if (facultyDetails[employeeId]) {
       setExpandedFacultyId(expandedFacultyId === employeeId ? null : employeeId);
       return;
@@ -119,7 +119,7 @@ export default function AdminDashboard() {
 
     const { data: offerings } = await supabase
       .from('course_offerings')
-      .select('id, course_code, courses(name)')
+      .select('id')
       .eq('employee_id', employeeId);
 
     const offeringIds = (offerings || []).map((o) => o.id);
@@ -150,13 +150,21 @@ export default function AdminDashboard() {
 
       const sums = {};
       const counts = {};
+
       (ratings || []).forEach((r) => {
-        sums[r.criteria_id] = (sums[r.criteria_id] || 0) + r.rating;
-        counts[r.criteria_id] = (counts[r.criteria_id] || 0) + 1;
+        const cId = parseInt(r.criteria_id, 10);
+        const val = parseFloat(r.rating);
+
+        if (!isNaN(cId) && !isNaN(val)) {
+          sums[cId] = (sums[cId] || 0) + val;
+          counts[cId] = (counts[cId] || 0) + 1;
+        }
       });
 
       Object.keys(sums).forEach((cid) => {
-        criteriaAvg[cid] = (sums[cid] / counts[cid]).toFixed(2);
+        if (counts[cid] > 0) {
+          criteriaAvg[cid] = (sums[cid] / counts[cid]).toFixed(2);
+        }
       });
     }
 
