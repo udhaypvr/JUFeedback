@@ -71,7 +71,19 @@ const handlePRNSubmit = async (e) => {
       return;
     }
 
-    // 2. FETCH ALL COURSE OFFERINGS
+    // 2. EXTRACT YEAR & DEPARTMENT CODE FROM PRN (e.g. "2025MBHR015" -> year "25", dept "MBHR")
+    // PRN Pattern: 4-digit year + Letters (Dept Code) + Numbers
+    const prnMatch = cleanPRN.match(/^(\d{4})([A-Z]+)\d+$/);
+    let targetPrefix = '';
+    
+    if (prnMatch) {
+      const fullYear = prnMatch[1];       // e.g. "2025"
+      const shortYear = fullYear.slice(2); // e.g. "25"
+      const deptCode = prnMatch[2];       // e.g. "MBHR"
+      targetPrefix = `${shortYear}${deptCode}`; // e.g. "25MBHR"
+    }
+
+    // 3. FETCH ALL COURSE OFFERINGS WITH COURSE & FACULTY DETAILS
     const { data: offeringsData, error: offError } = await supabase
       .from('course_offerings')
       .select(`
@@ -90,29 +102,29 @@ const handlePRNSubmit = async (e) => {
       return;
     }
 
-    // 3. SMART MATCHING: Match by partial programme name OR degree type (e.g., MBA vs BBA)
-    const progLower = (studentData.programme || '').toLowerCase();
-    
+    // 4. STRICT FILTERING BY COURSE CODE PREFIX (e.g. course_code starting with "25MBHR")
     let matchedOfferings = offeringsData.filter((off) => {
-      const offProg = (off.programme || off.courses?.programme || '').toLowerCase();
+      const courseCode = (off.courses?.code || '').toUpperCase().trim();
       
-      // Match exact, partial, or degree prefix (e.g., 'mba' matches 'mba', 'bba' matches 'bba')
-      if (!progLower || !offProg) return true;
-      if (offProg.includes(progLower) || progLower.includes(offProg)) return true;
-      if (progLower.startsWith('mba') && offProg.startsWith('mba')) return true;
-      if (progLower.startsWith('bba') && offProg.startsWith('bba')) return true;
-      if (progLower.startsWith('b.com') && offProg.startsWith('b.com')) return true;
-      if (progLower.startsWith('b.tech') && offProg.startsWith('b.tech')) return true;
-
-      return false;
+      if (targetPrefix) {
+        return courseCode.startsWith(targetPrefix);
+      }
+      return true;
     });
 
-    // Fallback: If matching is still too strict, show all offerings so students can pick their faculty
+    // Fallback: If no exact course code match found, filter by semester or programme
     if (matchedOfferings.length === 0) {
-      matchedOfferings = offeringsData;
+      const studentSemesterStr = String(studentData.semester || '');
+      matchedOfferings = offeringsData.filter((off) => String(off.semester) === studentSemesterStr);
     }
 
-    // 4. FETCH SUBMISSIONS & PREVIOUS SELECTIONS
+    if (matchedOfferings.length === 0) {
+      setLoading(false);
+      setPrnError(`No courses found matching prefix "${targetPrefix}" for PRN ${cleanPRN}.`);
+      return;
+    }
+
+    // 5. FETCH SUBMISSIONS & PREVIOUS SELECTIONS
     const { data: submissions } = await supabase
       .from('feedback_submissions')
       .select('course_offering_id')
