@@ -325,7 +325,7 @@ const handlePRNSubmit = async (e) => {
                     if (prnError) setPrnError('');
                   }}
                   required
-                  placeholder="Enter PRN (e.g., 2025MBBA001)"
+                  placeholder="Enter PRN"
                   className="w-full border border-slate-300 rounded-xl px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none transition uppercase"
                 />
 
