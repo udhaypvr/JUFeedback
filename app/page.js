@@ -71,8 +71,8 @@ const handlePRNSubmit = async (e) => {
       return;
     }
 
-    // 2. FETCH FACULTY OFFERINGS BASED ONLY ON PROGRAMME AND SEMESTER (No Batch lock)
-    let query = supabase
+    // 2. FETCH ALL COURSE OFFERINGS
+    const { data: offeringsData, error: offError } = await supabase
       .from('course_offerings')
       .select(`
         id,
@@ -84,37 +84,35 @@ const handlePRNSubmit = async (e) => {
         faculty:employee_id (employee_id, name, school)
       `);
 
-    // Match strictly by Programme and Semester
-    if (studentData.programme) query = query.eq('programme', studentData.programme);
-    if (studentData.semester) query = query.eq('semester', studentData.semester);
-
-    let { data: offeringsData, error: offError } = await query;
-
-    // Fallback: If no offerings match the exact semester, fetch all offerings for the programme
-    if ((!offeringsData || offeringsData.length === 0) && studentData.programme) {
-      const fallbackQuery = await supabase
-        .from('course_offerings')
-        .select(`
-          id,
-          batch,
-          section,
-          semester,
-          programme,
-          courses:course_code (code, name, school, programme),
-          faculty:employee_id (employee_id, name, school)
-        `)
-        .eq('programme', studentData.programme);
-
-      offeringsData = fallbackQuery.data;
-    }
-
-    if (!offeringsData || offeringsData.length === 0) {
+    if (offError || !offeringsData || offeringsData.length === 0) {
       setLoading(false);
-      setPrnError(`No faculty evaluations found for Programme: ${studentData.programme || 'All Programmes'}`);
+      setPrnError('No faculty evaluation sessions currently available.');
       return;
     }
 
-    // 3. FETCH SUBMISSIONS & PREVIOUS SELECTIONS
+    // 3. SMART MATCHING: Match by partial programme name OR degree type (e.g., MBA vs BBA)
+    const progLower = (studentData.programme || '').toLowerCase();
+    
+    let matchedOfferings = offeringsData.filter((off) => {
+      const offProg = (off.programme || off.courses?.programme || '').toLowerCase();
+      
+      // Match exact, partial, or degree prefix (e.g., 'mba' matches 'mba', 'bba' matches 'bba')
+      if (!progLower || !offProg) return true;
+      if (offProg.includes(progLower) || progLower.includes(offProg)) return true;
+      if (progLower.startsWith('mba') && offProg.startsWith('mba')) return true;
+      if (progLower.startsWith('bba') && offProg.startsWith('bba')) return true;
+      if (progLower.startsWith('b.com') && offProg.startsWith('b.com')) return true;
+      if (progLower.startsWith('b.tech') && offProg.startsWith('b.tech')) return true;
+
+      return false;
+    });
+
+    // Fallback: If matching is still too strict, show all offerings so students can pick their faculty
+    if (matchedOfferings.length === 0) {
+      matchedOfferings = offeringsData;
+    }
+
+    // 4. FETCH SUBMISSIONS & PREVIOUS SELECTIONS
     const { data: submissions } = await supabase
       .from('feedback_submissions')
       .select('course_offering_id')
@@ -135,7 +133,7 @@ const handlePRNSubmit = async (e) => {
 
     setActivePRN(cleanPRN);
     setStudentSemester(studentData.semester);
-    setAllOfferings(offeringsData);
+    setAllOfferings(matchedOfferings);
     setSelectedOfferingIds(mergedSelectedIds);
     setLoading(false);
 
