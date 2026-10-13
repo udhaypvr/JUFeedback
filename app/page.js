@@ -36,7 +36,7 @@ export default function StudentPortal() {
   const [prnError, setPrnError] = useState('');
   const [activePRN, setActivePRN] = useState(null);
   const [studentSemester, setStudentSemester] = useState(null);
-  const [step, setStep] = useState('login'); // 'login' | 'select_instructors' | 'dashboard'
+  const [step, setStep] = useState('login');
 
   const [allOfferings, setAllOfferings] = useState([]);
   const [selectedOfferingIds, setSelectedOfferingIds] = useState(new Set());
@@ -58,7 +58,6 @@ export default function StudentPortal() {
     setLoading(true);
     setPrnError('');
 
-    // 1. VERIFY PRN IN STUDENTS WHITELIST TABLE
     const { data: studentData, error: studentError } = await supabase
       .from('students')
       .select('*')
@@ -71,7 +70,6 @@ export default function StudentPortal() {
       return;
     }
 
-    // 2. FETCH FACULTY OFFERINGS MATCHING STUDENT'S BATCH, PROGRAMME & SEMESTER
     let query = supabase
       .from('course_offerings')
       .select(`
@@ -96,7 +94,6 @@ export default function StudentPortal() {
       return;
     }
 
-    // 3. FETCH SUBMISSIONS & PREVIOUS SELECTIONS
     const { data: submissions } = await supabase
       .from('feedback_submissions')
       .select('course_offering_id')
@@ -121,7 +118,6 @@ export default function StudentPortal() {
     setSelectedOfferingIds(mergedSelectedIds);
     setLoading(false);
 
-    // Jump directly to dashboard if selections already exist, otherwise instructor selection screen
     if (mergedSelectedIds.size > 0) {
       setStep('dashboard');
     } else {
@@ -188,26 +184,36 @@ export default function StudentPortal() {
 
     setSubmitting(true);
 
-    const { data: sub, error } = await supabase
+    // 1. Insert Submission
+    const { data: sub, error: subError } = await supabase
       .from('feedback_submissions')
       .insert([{ student_prn: activePRN, course_offering_id: modalOffering.id, comment }])
       .select()
       .single();
 
-    if (error) {
+    if (subError) {
       setSubmitting(false);
-      alert(error.code === '23505' ? 'Feedback already locked!' : 'Submission failed: ' + error.message);
+      alert(subError.code === '23505' ? 'Feedback already locked!' : 'Submission failed: ' + subError.message);
       setModalOffering(null);
       return;
     }
 
+    // 2. Insert Ratings for all 10 criteria
     const ratingsPayload = Object.entries(ratings).map(([critId, rating]) => ({
       submission_id: sub.id,
-      criteria_id: parseInt(critId),
-      rating: parseInt(rating)
+      criteria_id: parseInt(critId, 10),
+      rating: parseInt(rating, 10)
     }));
 
-    await supabase.from('feedback_ratings').insert(ratingsPayload);
+    const { error: ratingError } = await supabase
+      .from('feedback_ratings')
+      .insert(ratingsPayload);
+
+    if (ratingError) {
+      setSubmitting(false);
+      alert('Failed to save criteria ratings breakdown: ' + ratingError.message);
+      return;
+    }
 
     setSubmittedOfferingIds((prev) => new Set([...prev, modalOffering.id]));
     setSubmitting(false);
@@ -241,11 +247,7 @@ export default function StudentPortal() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <div className="bg-white w-10 h-10 shadow flex items-center justify-center overflow-hidden p-[3px]">
-              <img 
-                src="/logo.png" 
-                alt="Joy University Logo" 
-                className="w-full h-full object-contain"
-              />
+              <img src="/logo.png" alt="Joy University Logo" className="w-full h-full object-contain" />
             </div>
             <div>
               <h1 className="font-bold text-lg leading-tight">Joy University</h1>
@@ -364,9 +366,7 @@ export default function StudentPortal() {
                   >
                     <div className="space-y-2">
                       <div className="flex items-center space-x-2">
-                        <span className="text-xs font-bold px-2 py-0.5 rounded bg-indigo-100 text-indigo-800">
-                          {off.courses?.code}
-                        </span>
+                        <span className="text-xs font-bold px-2 py-0.5 rounded bg-indigo-100 text-indigo-800">{off.courses?.code}</span>
                         <span className="text-[10px] font-semibold text-slate-500">Sec {off.section}</span>
                       </div>
                       <h4 className="font-bold text-slate-900 text-sm">{off.courses?.name}</h4>
@@ -562,7 +562,6 @@ export default function StudentPortal() {
         </div>
       )}
 
-      {/* Footer */}
       <footer className="bg-[#520000] text-white py-4 text-center text-sm font-medium tracking-wide border-t border-[#3d0000] mt-8">
         Copyright @ 2026 &nbsp;|&nbsp; Joy University
       </footer>
